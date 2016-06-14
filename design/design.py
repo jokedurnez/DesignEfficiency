@@ -3,6 +3,7 @@ from numpy.linalg import inv
 from numpy import transpose as t
 from scipy.special import gamma
 from collections import Counter
+import pandas as pd
 
 class Design(object):
     '''
@@ -30,9 +31,13 @@ class Design(object):
         resolution: float, default 0.1
             maximum resolution of design matrix
             has an impact of preciseness of convolved design with HRF
+        weights
+        G
+        q
+        I
     '''
 
-    def __init__(self,ITI,TR,L,P,C,rho,Aoptimality=True,saturation=True,resolution=0.1):
+    def __init__(self,ITI,TR,L,P,C,rho,weights,Aoptimality=True,saturation=True,resolution=0.1,G=20,q=0.01,I=4):
         self.ITI = ITI
         self.TR = TR
         self.L = L
@@ -44,9 +49,14 @@ class Design(object):
         self.Aoptimality = Aoptimality
         self.saturation = saturation
         self.resolution = resolution
+        self.weights = weights
+        self.G = G
+        self.q = q
+        self.I = I
 
         self.CreateTsComp()
         self.CreateLmComp()
+        self.ComputeMaximumEfficiency()
 
     def CreateTsComp(self):
         self.duration = self.L*self.ITI #total duration (s)
@@ -70,6 +80,75 @@ class Design(object):
         VS = self.V*self.S
         self.Pvs = reduce(np.dot,[VS,np.linalg.pinv(np.dot(t(VS),VS)),t(VS)])
         return self
+
+    def GeneticAlgoritm(self):
+        Generation = self.GeneticAlgoritmInitiate()
+        Generation = self.GeneticAlgoritmCrossover(Generation)
+
+        return Generation
+
+    def GeneticAlgoritmInitiate(self):
+        Generation = {
+            'order' : [],
+            'F' : [],
+            'ID' : []
+        }
+        Generation = self.GeneticAlgoritmRandom(Generation,self.G)
+        return Generation
+
+    def GeneticAlgoritmRandom(self,Generation, r):
+        for k in range(r):
+            parent = self.RandomOrder(seed=k)
+            parent = self.CreateDesignMatrix(parent)
+            parent = self.ComputeEfficiency(parent)
+            Generation['order'].append(parent['order'])
+            Generation['F'].append(parent['F'])
+            Generation['ID'].append(k)
+        return Generation
+
+    def GeneticAlgoritmCrossover(self,Generation): ## REPLACE OR ADD?
+        CouplingRnd = np.random.choice(Generation['ID'],size=len(Generation['ID']),replace=True)
+        CouplingRnd = [[CouplingRnd[i],CouplingRnd[i+1]] for i in np.arange(0,len(Generation['ID']),2)]
+        for couple in CouplingRnd:
+            changepoint = np.random.choice(self.L,1)[0]
+            #create baby 1
+            baby1_a = Generation['order'][couple[0]][:changepoint]
+            baby1_b = Generation['order'][couple[1]][changepoint:]
+            baby1 = {'order':baby1_a+baby1_b}
+            baby1 = self.CreateDesignMatrix(baby1)
+            baby1 = self.ComputeEfficiency(baby1)
+            Generation['order'].append(baby1['order'])
+            Generation['F'].append(baby1['F'])
+            Generation['ID'].append(np.max(Generation['ID'])+1)
+            #create baby 2
+            baby2_a = Generation['order'][couple[1]][:changepoint]
+            baby2_b = Generation['order'][couple[0]][changepoint:]
+            baby2 = {'order':baby2_a+baby2_b}
+            baby2 = self.CreateDesignMatrix(baby2)
+            baby2 = self.ComputeEfficiency(baby2)
+            Generation['order'].append(baby2['order'])
+            Generation['F'].append(baby2['F'])
+            Generation['ID'].append(np.max(Generation['ID'])+1)
+        return Generation
+
+    def GeneticAlgoritmMutation(self,Generation): ## REPLACE OR ADD?
+        for order in Generation['order'][:self.G]:
+            mutated = np.random.choice(self.L,int(round(self.L*self.q)),replace=False)
+            mutatedorder = [np.random.choice(self.rc,1)[0] if ind in mutated else value for ind,value in enumerate(order)]
+            mutatedbaby = {'order':mutatedorder}
+            mutatedbaby = self.CreateDesignMatrix(mutatedbaby)
+            mutatedbaby = self.ComputeEfficiency(mutatedbaby)
+            Generation['order'].append(mutatedbaby['order'])
+            Generation['F'].append(mutatedbaby['F'])
+            Generation['ID'].append(np.max(Generation['ID'])+1)
+        return Generation
+
+    def GeneticAlgoritmImmigration(self,Generation):
+        Generation = self.GeneticAlgoritmRandom(Generation,self.I)
+        return Generation
+
+
+
 
     def RandomOrder(self,seed=np.random.randint(0,10**10)):
         '''
@@ -168,17 +247,37 @@ class Design(object):
                 Design['Ff']: efficiency against psychological confounds
                 Design['Fc']: optimality of probability of trials
         '''
-        self.FeCalc(Design)
-        self.FdCalc(Design)
-        self.FcCalc(Design)
-        self.FfCalc(Design)
+        Design = self.FeCalc(Design)
+        Design = self.FdCalc(Design)
+        Design = self.FcCalc(Design)
+        Design = self.FfCalc(Design)
+
+        Design['Fe']=Design['Fe']/self.FeMax
+        Design['Fd']=Design['Fd']/self.FdMax
+        Design['Ff']=1-Design['Ff']/self.FfMax
+        Design['Fc']=1-Design['Fc']/self.FcMax
+
+        Design['F'] = np.sum(self.weights * np.array([Design['Fc'],Design['Fd'],Design['Fe'],Design['Ff']]))
+
         return Design
+
+    def ComputeMaximumEfficiency(self):
+        nulorder = [np.argmin(self.P)]*self.L
+        NulDesign = {"order":nulorder}
+        NulDesign = self.CreateDesignMatrix(NulDesign)
+        self.FfMax = self.FfCalc(NulDesign)['Ff']
+        self.FcMax = self.FcCalc(NulDesign)['Fc']
+        self.FeMax = 1
+        self.FdMax = 1
+
+        return self
 
     def FeCalc(self,Design):
         W = Design['X']
-        M = reduce(np.dot,[self.C,t(W),t(self.V),(np.eye(self.tp)-self.Pvs),self.V,W,t(self.C)])
+        Cidentity = np.eye(self.rc)
+        M = reduce(np.dot,[Cidentity,t(W),t(self.V),(np.eye(self.tp)-self.Pvs),self.V,W,Cidentity])
         if self.Aoptimality == True:
-            Design["Fe"] = self.rc/np.matrix.trace(M)
+            Design["Fe"] = (self.rc/np.matrix.trace(M))
         else:
             Design["Fe"] = np.linalg.det(M)**(-1/self.rc)
 
@@ -188,10 +287,9 @@ class Design(object):
         W = Design['Z']
         M = reduce(np.dot,[self.C,t(W),t(self.V),(np.eye(self.tp)-self.Pvs),self.V,W,t(self.C)])
         if self.Aoptimality == True:
-            Design["Fe"] = self.rc/np.matrix.trace(M)
+            Design["Fd"] = self.rc/np.matrix.trace(M)
         else:
-            Design["Fe"] = np.linalg.det(M)**(-1/self.rc)
-
+            Design["Fd"] = np.linalg.det(M)**(-1/self.rc)
         return Design
 
     def FcCalc(self,Design):
