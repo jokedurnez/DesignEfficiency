@@ -147,9 +147,6 @@ class Design(object):
         Generation = self.GeneticAlgoritmRandom(Generation,self.I)
         return Generation
 
-
-
-
     def RandomOrder(self,seed=np.random.randint(0,10**10)):
         '''
         Generate a random order of stimuli
