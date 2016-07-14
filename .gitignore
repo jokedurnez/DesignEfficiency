@@ -1,2 +1,9 @@
 *.pyc
 *.dat
+
+Literature/*
+MyMseqOld/*
+Sanne/*
+Tools/*
+GFpri.txt
+ITI.txt

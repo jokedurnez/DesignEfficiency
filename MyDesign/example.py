@@ -4,6 +4,15 @@ import palettable.colorbrewer as cb
 import matplotlib.pyplot as plt
 
 from design import design
+from design import mseq
+
+###################
+
+sequence = mseq.TrialOrder(4)
+sequence.GenMseq(30)
+sequence.ms
+
+###################
 
 ISI = 2
 TR = 2
@@ -16,17 +25,14 @@ C = np.array([
 ])
 rho = 0.3 #temporal autocorrelation, assume AR(1)
 weights = np.array([1/4,1/4,1/4,1/4])
+G=20
 
 reload(design)
 des = design.Design(ISI,TR,L,p,C,rho,weights)
-order = des.RandomOrder(seed=1)
+order = des.RandomOrder()
 order = des.CreateDesignMatrix(order)
 order = des.ComputeEfficiency(order)
-Generation = des.GeneticAlgoritmInitiate()
-Generation = des.GeneticAlgoritmCrossover(Generation)
-Generation = des.GeneticAlgoritmMutation(Generation)
-Generation = des.GeneticAlgoritmImmigration(Generation)
-
+Generation = des.GeneticAlgoritm()
 
 
 # Figure of design
@@ -51,4 +57,15 @@ plt.legend(loc="upper right",frameon=False)
 plt.ylim([-0.5,3.5])
 plt.xlabel("seconds")
 plt.ylabel("normalised expected BOLD")
+plt.show()
+
+
+
+
+col=cb.qualitative.Set1_8.mpl_colors
+plt.figure(figsize=(7,5))
+plt.plot(Generation['FScores'],color=col[0],lw=3,label="optimisation")
+plt.legend(loc="upper right",frameon=False)
+plt.xlabel("cycles")
+plt.ylabel("F")
 plt.show()
